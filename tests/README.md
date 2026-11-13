@@ -11,7 +11,9 @@ cd ComfyUI  # your ComfyUI folder, with this folder copied to user/h3_tests
 .venv/bin/python user/h3_tests/h3_test.py t2v --steps 3              # quick smoke test (blurry video, checks speed and memory)
 ```
 
-Options: `--duration S`, `--steps N`, `--turbo`, `--no-writer` (send the idea box to H3 as written), `--idea TEXT`, `--image NAME`, `--seed N`, `--tag NAME`.
+Options: `--duration S`, `--steps N`, `--turbo`, `--fast` (the workflow's EasyCache switch), `--no-writer` (send the idea box to H3 as written), `--idea TEXT`, `--image NAME`, `--seed N`, `--tag NAME`, and `--patch sparse[:method=sol-attn|sla|vsa,tau=1.3,keep=10,start=0.2]` / `--patch easycache[:threshold=0.2]` to try ComfyUI's approximate speed-ups without editing the workflow.
+
+To measure an approximation, render the exact and the approximate version in the same ComfyUI session and compare them with `compare_videos.py`: within one session an exact re-render is bit-identical, while after a restart it already differs by about 19-23 dB PSNR.
 
 It passes when:
 

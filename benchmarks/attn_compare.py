@@ -90,6 +90,19 @@ if os.environ.get("AITER_FA_PATH"):
         return out.transpose(1, 2)
     KERNELS["aiter triton FA (AMD)"] = aiter
 
+if os.environ.get("WITH_SAGE_RDNA4"):
+    import sage_rdna4 as sr
+    for label, kw in [("bf16 (masked loop)", {}), ("bf16 + FA4 lazy rescale", dict(lazy=True)),
+                      ("int8 QK + bf16 PV", dict(qk_mode=1)), ("int8 QK + fp8 PV (Sage2)", dict(qk_mode=1, pv_mode=1)),
+                      ("fp8 QK + fp8 PV", dict(qk_mode=2, pv_mode=1)), ("int8 QK + bf16 PV + lazy", dict(qk_mode=1, lazy=True))]:
+        KERNELS["rdna4 " + label] = (lambda kw: lambda q, k, v: sr.attention(q, k, v, **kw))(kw)
+
+if os.environ.get("WITH_SOL"):
+    import comfy_kitchen as ck
+    for tau in [float(t) for t in os.environ["WITH_SOL"].split(",")]:
+        KERNELS[f"sol_attn tau={tau} (sparse)"] = (lambda tau: lambda q, k, v: ck.sol_attn(
+            q.transpose(1, 2).contiguous(), k.transpose(1, 2).contiguous(), v.transpose(1, 2).contiguous(), tau=tau).transpose(1, 2))(tau)
+
 if __name__ == "__main__":
     for S in [int(a) for a in sys.argv[1:]] or [38196]:
         q, k, v = make(S)

@@ -74,6 +74,8 @@ def build_prompt(a):
             v["inputs"]["value"] = a.turbo
         elif ct == "PrimitiveBoolean" and title.startswith("Use remote prompt writer"):
             v["inputs"]["value"] = not a.no_writer
+        elif ct == "PrimitiveBoolean" and title.startswith("Fast mode"):
+            v["inputs"]["value"] = a.fast
         elif ct == "RandomNoise" and a.seed is not None:
             v["inputs"]["noise_seed"] = a.seed
         elif ct == "LoadImage" and a.image:
@@ -83,6 +85,32 @@ def build_prompt(a):
     if a.steps:
         steps = next(v for v in prompt.values() if v["class_type"] == "ComfySwitchNode" and v["_meta"]["title"] == "If/Else Switch (Steps)")
         prompt[steps["inputs"]["on_true" if a.turbo else "on_false"][0]]["inputs"]["value"] = a.steps
+    # optional speed patches between the model and the sampler (both approximate: they change the output)
+    model_src = next(k for k, v in prompt.items() if v["class_type"] == "ComfySwitchNode" and v["_meta"]["title"] == "If/Else Switch (Model)")
+    src = [model_src, 0]
+    for i, patch in enumerate(a.patch or []):
+        name, _, args = patch.partition(":")
+        opts = dict(kv.split("=") for kv in args.split(",") if kv)
+        if name == "sparse":
+            method = opts.pop("method", "sol-attn")
+            node = {"class_type": "BlockSparseAttention", "inputs": {
+                "model": src, "selection": method, "start_percent": float(opts.pop("start", 0.2)), "end_percent": float(opts.pop("end", 1.0)),
+                "dense_blocks": opts.pop("dense", ""), "min_tokens": 12288, "extra_tokens": int(opts.pop("extra", 256)),
+                "sink_conditioning": "exact_kv_and_rows", "verbose": False}}
+            node["inputs"]["selection.tau" if method == "sol-attn" else "selection.keep_percent"] = float(opts.pop("tau" if method == "sol-attn" else "keep", 1.3 if method == "sol-attn" else 10.0))
+        elif name == "easycache":
+            node = {"class_type": "EasyCache", "inputs": {"model": src, "reuse_threshold": float(opts.pop("threshold", 0.2)),
+                                                          "start_percent": float(opts.pop("start", 0.15)), "end_percent": float(opts.pop("end", 0.95)), "verbose": False}}
+        else:
+            raise SystemExit(f"unknown patch {name}")
+        if opts:
+            raise SystemExit(f"unknown options for {name}: {opts}")
+        nid = str(9000 + i)
+        prompt[nid] = dict(node, _meta={"title": patch})
+        src = [nid, 0]
+    for v in prompt.values():
+        if v["class_type"] in ("BasicGuider", "BasicScheduler") and v["inputs"].get("model") == [model_src, 0]:
+            v["inputs"]["model"] = src
     return prompt
 
 
@@ -114,6 +142,11 @@ class Monitor(threading.Thread):
                 mm = re.search(r"\|\s*(\d+)/(\d+) \[", line)
                 if mm and int(mm.group(1)) not in self.steps:
                     self.steps[int(mm.group(1))] = t
+                    # loaded models print no "Requested to load", so the progress bar marks sampling and decoding too
+                    if mm.group(1) == "0":
+                        self.events.append((t, "sampling"))
+                    elif mm.group(1) == mm.group(2):
+                        self.events.append((t, "decode"))
             self.stop.wait(0.25)
 
     def window(self, ta, tb):
@@ -185,10 +218,13 @@ def main():
     ap.add_argument("--steps", type=int)
     ap.add_argument("--turbo", action="store_true")
     ap.add_argument("--no-writer", action="store_true")
+    ap.add_argument("--fast", action="store_true", help="turn on the workflow's fast mode (EasyCache)")
     ap.add_argument("--idea")
     ap.add_argument("--image")
     ap.add_argument("--seed", type=int)
     ap.add_argument("--tag")
+    ap.add_argument("--patch", action="append", help="approximate speed-up between model and sampler: "
+                    "sparse[:method=sol-attn|sla|vsa,tau=1.3,keep=10,start=0.2,end=1.0,dense=0-1,extra=256] or easycache[:threshold=0.2,start=0.15,end=0.95]")
     a = ap.parse_args()
     a.tag = a.tag or time.strftime(f"{a.mode}_{a.duration:g}s_%Y%m%d_%H%M%S")
     out = HERE / "runs"
@@ -204,7 +240,7 @@ def main():
     log = re.sub(r"\x1b\[[0-9;]*m", "", LOG.read_bytes()[mon.log_start:].decode("utf-8", "replace"))
     (out / f"{a.tag}.log").write_text(log)
 
-    report = dict(tag=a.tag, mode=a.mode, duration=a.duration, steps=a.steps or (8 if a.turbo else 20), turbo=a.turbo,
+    report = dict(tag=a.tag, mode=a.mode, fast=a.fast, patches=a.patch or [], duration=a.duration, steps=a.steps or (8 if a.turbo else 20), turbo=a.turbo,
                   writer=not a.no_writer, status=status, wall_seconds=round(wall), phases={}, step_seconds=[], problems=[])
     if status != "success":
         report["problems"].append(f"job status {status}: {json.dumps(hist.get('status'))[-1500:]}")

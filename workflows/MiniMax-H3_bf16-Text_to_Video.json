@@ -1,8 +1,8 @@
 {
  "id": "e3f2b845-8f2c-4b5a-9caf-eac1029d3e7e",
  "revision": 0,
- "last_node_id": 2010,
- "last_link_id": 38,
+ "last_node_id": 2013,
+ "last_link_id": 42,
  "nodes": [
   {
    "id": 92,
@@ -1145,8 +1145,8 @@
      "name": "output",
      "type": "MODEL",
      "links": [
-      23,
-      29
+      39,
+      41
      ]
     }
    ],
@@ -1761,13 +1761,165 @@
    "title": "This PC (RX 9070 XT): settings and timings",
    "properties": {},
    "widgets_values": [
-    "## MiniMax H3 at full quality on this PC\n\n- **Video model:** `minimax_h3_fl2va_pruned_bf16`, the full bf16 weights. \"Pruned\" only drops the timestep (AdaLN) branches, whose outputs MiniMax precomputes for inference. Every layer that draws the video is the original bf16.\n- **Text encoder:** `qwen3vl_32b_minimax_h3_bf16` (48 GB), run in bf16. **VAEs:** `minimax_h3_video_vae_fp16`, `minimax_h3_audio_vae_fp32`. No fp8, no int8, full attention.\n- **Resolution:** 1344x768 (H3's native 768p canvas; image to video keeps your picture's shape at the same pixel count). **Steps:** 20, no CFG (the released weights are CFG-distilled).\n\n## How to use\n\n1. Write your idea in **Your idea**: a sentence or two is enough, any language. Put spoken lines in quotes.\n2. Set **Float (duration)** in seconds: 5 is the default, 4 to 15 work.\n3. Run. The **remote prompt writer** (an OpenAI-compatible text server set by REMOTE_LLM_URL, about 20 s) turns the idea into H3's prompt format, sized to the clip length. For image to video it also looks at your picture. **Final prompt sent to H3** shows what H3 got.\n\nTurn **Use remote prompt writer** off to send the box to H3 exactly as written. Then write H3's format yourself: `integrated_multimodal_description: [Shot 1] ...`, `overall_soundscape: ...`, `non_diegetic_music: ...`, with speech as `<d>[English] ...</d>`.\n\n## Measured speed\n\nMeasured 2026-11-13, text to video at 1344x768, 20 steps:\n\n| Clip | Total | Text encoder | First step | Other steps | Decode |\n|---|---|---|---|---|---|\n| 5 s (default) | 15 min (was 29.5) | 1.4 min | 1.4 min | 36 s each | 1 min |\n| 10 s | ~45 min (estimate) | 1.4 min | 5 min | ~115 s each | 1.5 min |\n| 15 s | ~1 h 30 min (estimate) | 1.3 min | 5 min | ~240 s each | 2 min |\n\nThe 5 s row is a full run (plus ~20 s for the prompt writer). The 10 s and 15 s rows are extrapolated from shorter test runs made before the faster attention. A step sometimes takes longer when something else reads from the same drive.\n\n- Same idea and same duration with a new seed: the writer and the text encoder are skipped, so you only wait for the steps. Changing the duration runs the text encoder again (it is part of the H3 conditioning node).\n- Peak use stays at about 15.6 GB of VRAM with about 3 GB or more of RAM free, up to 15 s. Before these fixes a 15 s clip ran out of VRAM.\n- Three add-ons in `custom_nodes` make this possible. `disk_readahead` reads the next blocks of the 38 GB model from disk while the GPU works (80 -> 43 s per step). `triton_attention` is an exact attention kernel tuned for this GPU, 31% faster than PyTorch's (43 -> 36 s per step). `long_video_memory` lets clips over 9 s fit in 16 GB of VRAM and keeps RAM free while decoding them. None of them lowers the precision.\n- Renders are bit-identical when repeated in the same ComfyUI session. After a restart, fine details can vary slightly even with the same seed; that is normal for this setup.\n\n## Draft mode\n\n**Boolean (Enable Lightning LoRA)** switches to the official 8-step turbo LoRA: a 5 s clip took about 10 min against 19 before the faster attention (each step is slower than a normal one, because the LoRA is applied to weights streamed from disk). Some quality loss: leave it off for final renders.\n"
+    "## MiniMax H3 at full quality on this PC\n\n- **Video model:** `minimax_h3_fl2va_pruned_bf16`, the full bf16 weights. \"Pruned\" only drops the timestep (AdaLN) branches, whose outputs MiniMax precomputes for inference. Every layer that draws the video is the original bf16.\n- **Text encoder:** `qwen3vl_32b_minimax_h3_bf16` (48 GB), run in bf16. **VAEs:** `minimax_h3_video_vae_fp16`, `minimax_h3_audio_vae_fp32`. No fp8, no int8, full attention.\n- **Resolution:** 1344x768 (H3's native 768p canvas; image to video keeps your picture's shape at the same pixel count). **Steps:** 20, no CFG (the released weights are CFG-distilled).\n\n## How to use\n\n1. Write your idea in **Your idea**: a sentence or two is enough, any language. Put spoken lines in quotes.\n2. Set **Float (duration)** in seconds: 5 is the default, 4 to 15 work.\n3. Run. The **remote prompt writer** (an OpenAI-compatible text server set by REMOTE_LLM_URL, about 20 s) turns the idea into H3's prompt format, sized to the clip length. For image to video it also looks at your picture. **Final prompt sent to H3** shows what H3 got.\n\nTurn **Use remote prompt writer** off to send the box to H3 exactly as written. Then write H3's format yourself: `integrated_multimodal_description: [Shot 1] ...`, `overall_soundscape: ...`, `non_diegetic_music: ...`, with speech as `<d>[English] ...</d>`.\n\n## Measured speed\n\nMeasured 2026-11-13, text to video at 1344x768, 20 steps:\n\n| Clip | Total | Text encoder | First step | Other steps | Decode |\n|---|---|---|---|---|---|\n| 5 s (default) | 15 min (was 29.5) | 1.4 min | 1.4 min | 36 s each | 1 min |\n| 10 s | ~45 min (estimate) | 1.4 min | 5 min | ~115 s each | 1.5 min |\n| 15 s | ~1 h 30 min (estimate) | 1.3 min | 5 min | ~240 s each | 2 min |\n\nThe 5 s row is a full run (plus ~20 s for the prompt writer). The 10 s and 15 s rows are extrapolated from shorter test runs made before the faster attention. A step sometimes takes longer when something else reads from the same drive.\n\n- A prompt that was encoded before (any duration, even after restarting ComfyUI) skips the text encoder: `text_encoder_cache` keeps the results on disk (9 MB each, 2 GB max). Same idea with a new seed also skips the writer.\n- Peak use stays at about 15.6 GB of VRAM with about 3 GB or more of RAM free, up to 15 s. Before these fixes a 15 s clip ran out of VRAM.\n- Three add-ons in `custom_nodes` make this possible. `disk_readahead` reads the next blocks of the 38 GB model from disk while the GPU works (80 -> 43 s per step). `triton_attention` is an exact attention kernel tuned for this GPU, 31% faster than PyTorch's (43 -> 36 s per step). `long_video_memory` lets clips over 9 s fit in 16 GB of VRAM and keeps RAM free while decoding them. None of them lowers the precision.\n- Renders are bit-identical when repeated in the same ComfyUI session. After a restart, fine details can vary slightly even with the same seed; that is normal for this setup.\n\n## Fast mode (EasyCache)\n\n**Fast mode: EasyCache** (off by default) skips sampling steps whose result would barely change and reuses the previous one. Measured on this PC with the 5 s default clip: 6 of 20 steps skipped, 1.43x faster sampling (about 10 min instead of 14.4 for the same prompt), and the video stayed closer to the exact render (PSNR 30.4 dB, SSIM 0.90) than an exact re-render after a ComfyUI restart (19-23 dB). It is an approximation, so check it on your own scenes; fast motion is where skipped steps would show first.\n\n## Draft mode\n\n**Boolean (Enable Lightning LoRA)** switches to the official 8-step turbo LoRA: a 5 s clip took about 10 min against 19 before the faster attention (each step is slower than a normal one, because the LoRA is applied to weights streamed from disk). Some quality loss: leave it off for final renders.\n"
    ],
    "widgets_values_named": {
     "text": "## MiniMax H3\n\n[MiniMax H3](https://www.minimax.io/blog/minimax-h3) is MiniMax's general-purpose, omni-modal generation model. It jointly understands text, image, video, and audio, and generates video with **native stereo audio**: voice, sound effects, and music are modeled jointly in a single forward pass, not layered on afterward. Output is up to 2K resolution, 24fps, and up to about 15 seconds.\n\n## ComfyUI links\n- [ComfyUI#15224](https://github.com/Comfy-Org/ComfyUI/pull/15224)\n- [🤗 Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3)\n\n## About this workflow\n\n**Key inputs**\n\n- **prompt**: describe the shots, camera moves, and the accompanying audio (dialogue, SFX, music) in one block\n- **width / height**: set via Resolution Selector. H3's native canvas is a 768px short edge, capped at 768x1344 pixels, rounded to a multiple of 32\n- **duration (seconds)**: converted to a valid frame `length` by the Math Expression node, snapping up to the model's 17-frame-per-block (17k+5) grid at 24fps\n"
    },
    "color": "#222",
    "bgcolor": "#000"
+  },
+  {
+   "id": 2011,
+   "type": "PrimitiveBoolean",
+   "pos": [
+    -990,
+    4080
+   ],
+   "size": [
+    420,
+    80
+   ],
+   "flags": {},
+   "order": 20,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "value",
+     "name": "value",
+     "type": "BOOLEAN",
+     "widget": {
+      "name": "value"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "BOOLEAN",
+     "name": "BOOLEAN",
+     "type": "BOOLEAN",
+     "links": [
+      42
+     ]
+    }
+   ],
+   "title": "Fast mode: EasyCache (skips steps that barely change, ~1.4x faster)",
+   "properties": {
+    "cnr_id": "comfy-core",
+    "ver": "0.33.0",
+    "Node name for S&R": "PrimitiveBoolean"
+   },
+   "widgets_values": [
+    false
+   ],
+   "widgets_values_named": {
+    "value": false
+   },
+   "color": "#322",
+   "bgcolor": "#533"
+  },
+  {
+   "id": 2013,
+   "type": "EasyCache",
+   "pos": [
+    -990,
+    4200
+   ],
+   "size": [
+    420,
+    160
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "model",
+     "type": "MODEL",
+     "link": 39
+    }
+   ],
+   "outputs": [
+    {
+     "name": "MODEL",
+     "type": "MODEL",
+     "links": [
+      40
+     ]
+    }
+   ],
+   "title": "EasyCache (defaults measured on this PC)",
+   "properties": {
+    "Node name for S&R": "EasyCache"
+   },
+   "widgets_values": [
+    0.2,
+    0.15,
+    0.95,
+    false
+   ]
+  },
+  {
+   "id": 2012,
+   "type": "ComfySwitchNode",
+   "pos": [
+    -530,
+    4080
+   ],
+   "size": [
+    300,
+    120
+   ],
+   "flags": {},
+   "order": 17,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "on_false",
+     "name": "on_false",
+     "type": "MODEL",
+     "link": 41
+    },
+    {
+     "localized_name": "on_true",
+     "name": "on_true",
+     "type": "MODEL",
+     "link": 40
+    },
+    {
+     "localized_name": "switch",
+     "name": "switch",
+     "type": "BOOLEAN",
+     "widget": {
+      "name": "switch"
+     },
+     "link": 42
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "output",
+     "name": "output",
+     "type": "MODEL",
+     "links": [
+      23,
+      29
+     ]
+    }
+   ],
+   "title": "Model (fast mode or exact)",
+   "properties": {
+    "cnr_id": "comfy-core",
+    "ver": "0.33.0",
+    "Node name for S&R": "ComfySwitchNode"
+   },
+   "widgets_values": [
+    false
+   ],
+   "widgets_values_named": {
+    "switch": false
+   }
   }
  ],
  "links": [
@@ -1949,7 +2101,7 @@
   ],
   [
    23,
-   1135,
+   2012,
    0,
    1124,
    0,
@@ -1997,7 +2149,7 @@
   ],
   [
    29,
-   1135,
+   2012,
    0,
    1126,
    0,
@@ -2074,6 +2226,38 @@
    2006,
    0,
    "*"
+  ],
+  [
+   39,
+   1135,
+   0,
+   2013,
+   0,
+   "MODEL"
+  ],
+  [
+   40,
+   2013,
+   0,
+   2012,
+   1,
+   "*"
+  ],
+  [
+   41,
+   1135,
+   0,
+   2012,
+   0,
+   "*"
+  ],
+  [
+   42,
+   2011,
+   0,
+   2012,
+   2,
+   "BOOLEAN"
   ]
  ],
  "groups": [
