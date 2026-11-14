@@ -49,6 +49,8 @@ Other models gain from `triton_attention` where their attention is unmasked: MOS
 
    The weights are under the MiniMax H3 Community License, not this repo's.
 
+**Set `HSA_TOOLS_DISABLE_REGISTER=1` before starting ComfyUI.** With the ROCm runtime bundled in AMD's PyTorch wheels (ROCm 10.0, gfx1201), one CPU thread (`rocr::core::Runtime::AsyncEventsLoop`) busy-polls at 100% forever once the first kernel or event runs: a full core and +30 C on an idle machine here. That variable turns off the profiler-tool hook that causes it (unset it to run rocprofv3); results and speed are unchanged.
+
 Each add-on is independent: `COMFY_READAHEAD_MB=0`, `COMFY_TRITON_ATTENTION=0` (or `COMFY_HIP_ATTENTION=0` for the Triton kernel only), `COMFY_TRITON_RMS_ROPE=0` and `COMFY_FUSED_ELEMENTWISE=0` switch them off. `triton_attention` only enables itself on gfx1200/gfx1201, and builds its HIP kernel with `hipcc` (`HIPCC`, `ROCM_PATH` or `/opt/rocm`) on first use.
 
 ## Attention on gfx1201
