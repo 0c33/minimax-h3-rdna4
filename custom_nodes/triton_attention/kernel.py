@@ -2,7 +2,7 @@ import torch
 import triton
 import triton.language as tl
 
-# Measured on an RX 9070 XT at 56 heads x 128 and 38k tokens (bf16): 94.7 TFLOPS vs 72 for SDPA (AOTriton 0.13).
+# Measured on an RX 9070 XT at 56 heads x 128 and 38k tokens (bf16): 97 TFLOPS vs 72 for SDPA (AOTriton 0.13).
 # Searched over BLOCK_M 64-256, BLOCK_N 32-128, 4/8 warps, 1/2 stages, waves_per_eu 0/2.
 BLOCK_M, BLOCK_N, NUM_WARPS, NUM_STAGES, WAVES_PER_EU = 128, 32, 8, 1, 2
 
@@ -15,7 +15,7 @@ def supported_device(device):
 @triton.jit
 def _attn_fwd(Q, K, V, O, sm_scale,
               s_qb, s_qh, s_qm, s_kb, s_kh, s_kn, s_vb, s_vh, s_vn, s_ob, s_oh, s_om,
-              H, N_Q, N_KV, HEAD_DIM: tl.constexpr, BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr):
+              H, N_Q, N_KV, HEAD_DIM: tl.constexpr, BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, P_BF16: tl.constexpr):
     start_m = tl.program_id(0)
     bh = tl.program_id(1)
     b = bh // H
@@ -39,7 +39,14 @@ def _attn_fwd(Q, K, V, O, sm_scale,
         alpha = tl.math.exp2(m_i - m_ij)
         l_i = l_i * alpha + tl.sum(p, 1)
         v = tl.load(v_base + (start_n + offs_n)[:, None] * s_vn + offs_d[None, :])
-        acc = tl.dot(p.to(v.dtype), v, acc * alpha[:, None])
+        if P_BF16:
+            # gfx12 has no fp32->bf16 instruction, and the compiler's round-to-nearest-even also handles NaN, which
+            # p (in [0, 1]) never is: the same rounding without it is ~4% faster and bit-identical
+            pi = p.to(tl.uint32, bitcast=True)
+            pi = pi + 0x7FFF + ((pi >> 16) & 1)
+            acc = tl.dot((pi >> 16).to(tl.uint16).to(tl.bfloat16, bitcast=True), v, acc * alpha[:, None])
+        else:
+            acc = tl.dot(p.to(v.dtype), v, acc * alpha[:, None])
         m_i = m_ij
     if n_full < N_KV:
         cols = n_full + offs_n
@@ -68,6 +75,6 @@ def attention(q, k, v, scale=None):
     _attn_fwd[grid](q, k, v, out, D ** -0.5 if scale is None else scale,
                     q.stride(0), q.stride(1), q.stride(2), k.stride(0), k.stride(1), k.stride(2),
                     v.stride(0), v.stride(1), v.stride(2), out.stride(0), out.stride(1), out.stride(2),
-                    H, NQ, k.shape[2], HEAD_DIM=D, BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
+                    H, NQ, k.shape[2], HEAD_DIM=D, BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, P_BF16=q.dtype == torch.bfloat16,
                     num_warps=NUM_WARPS, num_stages=NUM_STAGES, waves_per_eu=WAVES_PER_EU)
     return out

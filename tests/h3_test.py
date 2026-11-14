@@ -39,6 +39,27 @@ CARD = next(p.parent for p in Path("/sys/class/drm").glob("card*/device/mem_info
 # temperature of the first NVMe drive (set H3_TEST_NVME_MODEL to pick another one by model name)
 NVME = next((h for h in sorted(Path("/sys/class/hwmon").glob("hwmon*")) if (h / "name").read_text().strip() == "nvme"
              and os.environ.get("H3_TEST_NVME_MODEL", "") in (h / "device/model").read_text()), None)
+
+
+def models_disk():
+    """/proc/diskstats name of the partition holding ComfyUI/models: real disk reads, unlike the process's rchar,
+    which also counts page-cache hits (data read ahead once and then copied again counts twice there)."""
+    target = str((COMFY / "models").resolve())
+    best = ("", None)
+    for line in open("/proc/mounts"):
+        src, mnt = line.split()[:2]
+        if (target == mnt or target.startswith(mnt.rstrip("/") + "/")) and len(mnt) > len(best[0]):
+            best = (mnt, src)
+    return best[1].rsplit("/", 1)[-1] if best[1] and best[1].startswith("/dev/") else None
+
+
+DISK = models_disk()
+
+
+def disk_read_bytes():
+    if DISK is None:
+        return 0
+    return next((int(l.split()[5]) * 512 for l in open("/proc/diskstats") if l.split()[2] == DISK), 0)
 # first match of each name starts that phase; the writer finishing is where the text encoder starts
 PHASES = [("prompt writer", r"got prompt"), ("text encoder", r"Remote text generation: .* wrote"),
           ("text encoder", r"Requested to load MiniMaxH3TEModel_"), ("sampling", r"Requested to load MiniMaxH3$"),
@@ -127,7 +148,7 @@ class Monitor(threading.Thread):
             m = {k: int(v.split()[0]) / 2**20 for k, v in (l.split(":", 1) for l in open("/proc/meminfo"))}
             rchar = next(int(l.split()[1]) for l in open(f"/proc/{self.pid}/io") if l.startswith("rchar"))
             self.samples.append(dict(t=t, busy=int((CARD / "gpu_busy_percent").read_text()), vram=int((CARD / "mem_info_vram_used").read_text()) / 2**30,
-                                     avail=m["MemAvailable"], swap=m["SwapTotal"] - m["SwapFree"], rchar=rchar,
+                                     avail=m["MemAvailable"], swap=m["SwapTotal"] - m["SwapFree"], rchar=rchar, disk=disk_read_bytes(),
                                      nvme=int((NVME / "temp1_input").read_text()) / 1000 if NVME else 0))
             with open(LOG, "rb") as f:
                 f.seek(self.pos)
@@ -153,7 +174,8 @@ class Monitor(threading.Thread):
         s = [x for x in self.samples if ta <= x["t"] <= tb]
         if len(s) < 2:
             return None
-        return dict(seconds=round(tb - ta, 1), disk_gb=round((s[-1]["rchar"] - s[0]["rchar"]) / 1e9, 1),
+        return dict(seconds=round(tb - ta, 1), disk_gb=round((s[-1]["disk"] - s[0]["disk"]) / 1e9, 1),
+                    proc_read_gb=round((s[-1]["rchar"] - s[0]["rchar"]) / 1e9, 1),
                     gpu_busy=round(sum(x["busy"] for x in s) / len(s)), vram_max=round(max(x["vram"] for x in s), 2),
                     ram_avail_min=round(min(x["avail"] for x in s), 2), swap_max=round(max(x["swap"] for x in s), 2),
                     nvme_max_c=max(x["nvme"] for x in s))
@@ -253,6 +275,9 @@ def main():
             report["phases"][na] = w
     ks = sorted(mon.steps)
     report["step_seconds"] = [round(mon.steps[b] - mon.steps[c], 1) for c, b in zip(ks, ks[1:]) if mon.steps[b] > mon.steps[c]]
+    step_windows = [mon.window(mon.steps[c], mon.steps[b]) for c, b in zip(ks, ks[1:]) if mon.steps[b] > mon.steps[c]]
+    report["step_disk_gb"] = [w["disk_gb"] if w else None for w in step_windows]
+    report["step_gpu_busy"] = [w["gpu_busy"] if w else None for w in step_windows]
     report["whole_run"] = mon.window(mon.samples[0]["t"], mon.samples[-1]["t"])
     if report["whole_run"]["ram_avail_min"] < 1.0:
         report["problems"].append(f"RAM available fell to {report['whole_run']['ram_avail_min']} GB")
